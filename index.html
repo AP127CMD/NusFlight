@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nu's Flight</title>
+<meta name="description" content="3D replays of Nu's DA40 training flights over satellite terrain">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
+  "mp4-muxer": "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs"
+} }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+</head>
+<body>
+<div id="map"></div>
+<canvas id="ov" aria-hidden="true"></canvas>
+
+<aside id="list" class="panel">
+  <header class="list-head">
+    <div class="brand"><span class="brand-mark">NGT</span> Nu's Flight</div>
+    <button id="list-close" class="icon-btn only-phone" aria-label="Close flight list">✕</button>
+  </header>
+  <input id="search" type="search" placeholder="Search lesson, tail, date…" autocomplete="off" aria-label="Search flights">
+  <div id="flights" role="listbox" aria-label="Flights"></div>
+  <footer class="list-foot" id="list-foot"></footer>
+</aside>
+
+<nav id="cams" class="panel" aria-label="Camera">
+  <button data-cam="chase" title="Chase — behind the aircraft (1)">Chase</button>
+  <button data-cam="follow" title="Orbit — rotate freely around the aircraft (2)">Orbit</button>
+  <button data-cam="cockpit" title="Cockpit — pilot's eye (3)">Cockpit</button>
+  <button data-cam="free" title="Free — pan anywhere (4)">Free</button>
+  <button id="overview" title="Whole flight (O)">Overview</button>
+  <button id="export-open" title="Export an MP4 video">Video ⤓</button>
+  <label class="colorby">Path
+    <select id="colorby" aria-label="Colour the path by">
+      <option value="alt">Altitude</option>
+      <option value="gs">Groundspeed</option>
+      <option value="vs">Vertical speed</option>
+      <option value="hr">Heart rate</option>
+      <option value="plain">Plain</option>
+    </select>
+  </label>
+</nav>
+
+<section id="bar" class="panel" aria-label="Playback">
+  <button id="list-open" class="icon-btn" aria-label="Show flight list" title="Flights (F)">☰</button>
+  <button id="play" class="play" aria-label="Play" title="Play / pause (Space)">▶</button>
+  <div class="speed" role="group" aria-label="Replay speed">
+    <button id="slower" class="icon-btn" aria-label="Slower" title="Slower ([)">−</button>
+    <span id="speed">10×</span>
+    <button id="faster" class="icon-btn" aria-label="Faster" title="Faster (])">+</button>
+  </div>
+  <div class="tl-wrap">
+    <canvas id="timeline" aria-label="Timeline — drag to scrub"></canvas>
+    <div class="tl-times"><span id="tl-now">00:00</span><span id="tl-end">/ 00:00</span></div>
+  </div>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+
+<dialog id="export" aria-labelledby="x-title">
+  <h2 id="x-title">Export video</h2>
+  <p class="x-note">Records the replay exactly as you see it — current camera mode, path colours and instruments — into an MP4. Frames are rendered one by one, so the video is smooth even if your Mac is slower than real time.</p>
+  <div class="x-grid">
+    <label for="x-speed">Speed</label>
+    <select id="x-speed">
+      <option value="1">1× real time</option><option value="2">2×</option><option value="5">5×</option>
+      <option value="10">10×</option><option value="20">20×</option><option value="30">30×</option>
+      <option value="50">50×</option><option value="100">100×</option><option value="200">200×</option>
+    </select>
+    <label for="x-range">Part</label>
+    <select id="x-range">
+      <option value="air">First takeoff → last landing</option>
+      <option value="all">Whole recording (incl. taxi)</option>
+      <option value="rest">From the current position to the end</option>
+    </select>
+    <label for="x-res">Size</label>
+    <select id="x-res">
+      <option value="1280x720">720p</option><option value="1920x1080" selected>1080p</option>
+      <option value="2560x1440">1440p</option><option value="3840x2160">4K (slow)</option>
+    </select>
+    <label for="x-fps">Frame rate</label>
+    <select id="x-fps"><option value="30" selected>30 fps</option><option value="60">60 fps</option></select>
+  </div>
+  <p id="x-est" class="x-est"></p>
+  <progress id="x-bar" value="0" max="1"></progress>
+  <p id="x-msg" class="x-msg" aria-live="polite"></p>
+  <div class="x-actions">
+    <button id="x-cancel" type="button" class="x-btn">Close</button>
+    <button id="x-start" type="button" class="x-btn primary">Export MP4</button>
+  </div>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
