@@ -73,7 +73,7 @@ const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(-0.4, -0.6, 1).normalize();
 scene.add(sun);
 
-const callsignMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+const callsignMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
 document.fonts.load('800 150px "Barlow Condensed"').finally(() => { callsignMat.map = callsignTexture(CALLSIGN); callsignMat.needsUpdate = true; });
 const aircraft = buildAircraft();
 world.add(aircraft);
@@ -145,10 +145,10 @@ function buildAircraft() {
     const pos = w.geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) if (Math.abs(pos.getX(i)) > 5) pos.setY(i, pos.getY(i) * 0.62 - 0.1);
     w.position.set(side * 0.3, 0.45, -0.28);
-    w.rotation.y = side * 0.07;
+    w.rotation.y = -side * 0.07;   // dihedral: tips up
     g.add(w);
     const call = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.78), callsignMat);   // top of the wing, letters' tops toward the nose
-    call.position.set(side * 3.05, -0.02, 0.075);
+    call.position.set(side * 3.05, -0.02, 0.13);   // clear of the skin: depth precision is coarse at map scale
     w.add(call);
     const tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshBasicMaterial({ color: side > 0 ? 0x33ff66 : 0xff3333 }));
     tip.position.set(side * 6.2, 0.35, 0.15);
