@@ -247,6 +247,10 @@ function prepare(F) {
     F.hrSum[i] = (i ? F.hrSum[p] : 0) + (c.hr[i] ?? 0); F.hrN[i] = (i ? F.hrN[p] : 0) + (c.hr[i] != null ? 1 : 0);
     F.hrMax[i] = Math.max(i ? F.hrMax[p] : 0, c.hr[i] ?? 0);
   }
+  if (c.ias) {
+    F.maxIas = new Float64Array(n);
+    for (let i = 0; i < n; i++) F.maxIas[i] = Math.max(i ? F.maxIas[i - 1] : 0, c.ias[i] ?? 0);
+  }
   F.xc = /XC|XV/.test(`${F.kind} ${F.lesson}`);
   F.t0ms = Date.parse(F.t0);
   F.takeoffs = F.events.filter((e) => e.type === 'takeoff').map((e) => e.t);
@@ -349,6 +353,11 @@ function sample(t) {
     gs: lerp(c.gs[i], c.gs[j], u), vs: lerp(c.vs[i], c.vs[j], u), trk: alerp(c.trk[i], c.trk[j], u), hdg: alerp(c.hdg[i], c.hdg[j], u),
     pitch: lerp(c.pitch[i], c.pitch[j], u), roll: lerp(c.roll[i], c.roll[j], u), g: lerp(c.g[i], c.g[j], u),
     hr: lerp(c.hr[i], c.hr[j], u), dist: lerp(F.dist[i], F.dist[j], u),
+    ias: c.ias && lerp(c.ias[i], c.ias[j], u), tas: c.tas && lerp(c.tas[i], c.tas[j], u),
+    oat: c.oat && lerp(c.oat[i], c.oat[j], u), rpm: c.rpm && lerp(c.rpm[i], c.rpm[j], u),
+    wind: c.wind && lerp(c.wind[i], c.wind[j], u),
+    windfrom: c.windfrom && alerp(c.windfrom[i], c.windfrom[j], u),
+    fuel: c.fuel && lerp(c.fuel[i], c.fuel[j], u),
   };
 }
 
@@ -398,6 +407,7 @@ function frame(s) {
 
   const terr = map.queryTerrainElevation([s.lon, s.lat]);
   const gz = (terr != null ? terr : S.terrainOffset + s.gnd * FT) - S.terrainOffset;
+  S.aglNow = terr != null ? (s.z - gz) / FT : null;   // height over the map's DEM, for sources without terrain
   const air = s.z - gz > 15;
   dropLine.visible = ring.visible = air && S.cam !== 'cockpit';
   const dp = dropGeom.attributes.position;
@@ -488,7 +498,7 @@ function overlayState(s) {
   const hrHist = [];
   for (let tt = Math.max(0, t - 900); tt <= t; tt += 20) { const v = sample(tt).hr; if (v != null) hrHist.push(v); }
   const tos = F.takeoffs.filter((x) => x <= t).length, lds = F.landings.filter((x) => x <= t).length;
-  const ahrs = F.attitude === 'ahrs';
+  const ahrs = F.attitude === 'ahrs' || F.attitude === 'g1000';
   const stats = [
     ['ELAPSED', `${hms(t)} / ${hms(end)}`, ''],
     ['AIRBORNE', hm(F.air[i]), 'H:MM'],
@@ -498,6 +508,8 @@ function overlayState(s) {
     ['MAX BANK', F.maxBank[i].toFixed(0), '°'],
   ];
   if (ahrs && F.maxG[i] > 0) stats.push(['LOAD', `${F.minG[i].toFixed(2)} – ${F.maxG[i].toFixed(2)}`, 'G']);
+  if (F.cols.ias) stats.push(['MAX IAS', String(Math.round(F.maxIas[i])), 'KT']);
+  if (F.cols.fuel) stats.push(['FUEL USED', (F.cols.fuel[0] - F.cols.fuel[i]).toFixed(1), 'GAL']);
   if (F.hrN[i]) stats.push(['HR AVG · MAX', `${Math.round(F.hrSum[i] / F.hrN[i])} · ${Math.round(F.hrMax[i])}`, 'BPM']);
   const up = F.kind ? F.kind.toUpperCase() : '';
   return {
@@ -507,9 +519,13 @@ function overlayState(s) {
     place: pl.text, legColor: pl.legColor, brg: pl.brg, brgLabel: pl.brgLabel,
     lcl: clock(t), utc: new Date(F.t0ms + t * 1000).toISOString().slice(11, 19) + 'Z',
     hr: s.hr, hrHist,
-    gs: s.gs || 0, alt: s.alt, vs: s.vs || 0, agl: s.alt - s.gnd, aglValid: F.agl === 'terrain',
+    gs: s.gs || 0, alt: s.alt, vs: s.vs || 0,
+    agl: F.agl === 'terrain' ? s.alt - s.gnd : (S.aglNow ?? s.alt - s.gnd),
+    aglValid: F.agl === 'terrain' || S.aglNow != null,
+    ias: s.ias, tas: s.tas, oat: s.oat, wind: s.wind, windFrom: s.windfrom, rpm: s.rpm,
     hdg: s.hdg, trk: s.trk, pitch: s.pitch || 0, roll: s.roll || 0, g: ahrs ? s.g : null, attEst: !ahrs,
-    gsTrend: ((sample(t + 3).gs ?? 0) - (sample(Math.max(0, t - 3)).gs ?? 0)), altTrend: (s.vs || 0) / 10,
+    gsTrend: s.ias != null ? ((sample(t + 3).ias ?? 0) - (sample(Math.max(0, t - 3)).ias ?? 0))
+      : ((sample(t + 3).gs ?? 0) - (sample(Math.max(0, t - 3)).gs ?? 0)), altTrend: (s.vs || 0) / 10,
     stats, statsNote: 'SO FAR',
   };
 }
@@ -725,7 +741,7 @@ $('list-open').addEventListener('click', () => toggleList());
 $('list-close').addEventListener('click', () => toggleList(false));
 $('search').addEventListener('input', renderList);
 
-const BADGE = { ahrs: 'AHRS', gps: 'GPS', track15: '15 s', null: 'no track' };
+const BADGE = { g1000: 'G1000', ahrs: 'AHRS', gps: 'GPS', track15: '15 s', null: 'no track' };
 function renderList() {
   const q = $('search').value.trim().toLowerCase();
   const box = $('flights');
@@ -752,8 +768,10 @@ function renderList() {
     box.append(b);
   }
   const have = S.index.filter((f) => f.source).length;
-  const ahrs = S.index.filter((f) => f.source === 'ahrs').length;
-  $('list-foot').innerHTML = `<b>${have}</b> of ${S.index.length} flights have a track · <b>${ahrs}</b> with measured attitude (Spidertracks AHRS). GPS / 15 s tracks show estimated attitude.`;
+  const measured = S.index.filter((f) => f.attitude === 'ahrs' || f.attitude === 'g1000').length;
+  const panel = S.index.filter((f) => f.source === 'g1000').length;
+  $('list-foot').innerHTML = `<b>${have}</b> of ${S.index.length} flights have a track · <b>${measured}</b> with measured attitude` +
+    (panel ? ` (<b>${panel}</b> from the aircraft's G1000 log)` : '') + `. GPS / 15 s tracks show estimated attitude.`;
   markSelected();
 }
 function markSelected() {

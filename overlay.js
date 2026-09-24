@@ -247,10 +247,26 @@ function statsCard(p, st, x, y, w) {
   return h;
 }
 
+// G1000-style wind badge: an arrow blowing with the wind, drawn relative to the aircraft's heading
+function windBadge(p, st, x, y) {
+  if (st.wind == null || st.windFrom == null) return;
+  const c = p.ctx, r = 17;
+  p.text('WIND', x - r - 6, y - 6, LABEL, 15, DIM, 'right');
+  p.text(`${Math.round(st.wind)} KT`, x - r - 6, y + 12, NUM, 15, INK, 'right');
+  p.text(`${String(Math.round(st.windFrom) % 360 || 360).padStart(3, '0')}°`, x + r + 6, y + 12, NUM, 15, INK, 'left');
+  c.save(); c.translate(x, y + 2); c.rotate((st.windFrom - st.hdg + 180) * Math.PI / 180);
+  p.line(0, -r, 0, r, CYAN, 2.4);
+  p.poly([[0, r + 2], [-6, r - 8], [6, r - 8]], CYAN);
+  c.restore();
+}
+
 function smallValues(p, st, x, y) {
   const items = [];
   if (st.aglValid) items.push(['AGL', String(Math.max(0, Math.round(st.agl / 10) * 10)), 'FT']);
   if (st.g != null) items.push(['G', st.g.toFixed(2), '']);
+  if (st.ias != null) items.push(['GS', String(Math.round(st.gs)), 'KT']);      // the tape shows IAS instead
+  if (st.tas != null) items.push(['TAS', String(Math.round(st.tas)), 'KT']);
+  if (st.oat != null) items.push(['OAT', `${Math.round(st.oat)}`, '°C']);
   items.forEach(([k, v, u], i) => {
     const yy = y + i * 30;
     const w = p.text(k, x, yy, LABEL, 19, DIM);
@@ -275,12 +291,14 @@ export function drawOverlay(ctx, rect, st, { compact = false, scale = null } = {
   if (st.hasPos) {
     // instrument cluster, bottom-left: GS tape · attitude · ALT tape + VSI, HSI underneath
     const cx = m + 226, adiY = H - m - 470, r = 105;
-    tape(p, m + 6, adiY - 125, 78, 250, st.gs, 4.0, 5, 10, 'GS', 'KT', st.gsTrend, 'left');
+    const spd = st.ias != null ? st.ias : st.gs;      // G1000 logs give real indicated airspeed
+    tape(p, m + 6, adiY - 125, 78, 250, spd, 4.0, 5, 10, st.ias != null ? 'IAS' : 'GS', 'KT', st.gsTrend, 'left');
     attitude(p, st, cx, adiY, r);
     tape(p, cx + r + 22, adiY - 125, 90, 250, st.alt, 0.40, 20, 100, 'ALT', 'FT', st.altTrend, 'right');
     vsi(p, st, cx + r + 118, adiY - 105, 22, 210);
     hsi(p, st, cx, H - m - 128, 118);
-    smallValues(p, st, cx + r + 40, H - m - 190);
+    smallValues(p, st, cx + r + 40, H - m - 250);
+    windBadge(p, st, cx + r + 92, H - m - 78);
     if (!compact && st.stats) statsCard(p, st, W - m - 300, H - m - (44 + st.stats.length * 30), 300);
   }
   ctx.restore();
