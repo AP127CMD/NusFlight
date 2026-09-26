@@ -162,6 +162,21 @@ function hsi(p, st, cx, cy, r) {
     p.poly([[0, -r + 38], [-8, -r + 52], [8, -r + 52]], CYAN);
     c.restore();
   }
+  // course pointer + deviation bar (G1000 CDI): magenta on GPS, green on VOR. HCDI is in full-scale units,
+  // positive = needle right (fly right); full scale = the outer dot (10° on a VOR, the GPS alarm limit)
+  if (st.cdi && st.cdi.crs != null) {
+    const col = st.cdi.src === 'GPS' ? MAGENTA : GREEN, dot = r * 0.2;
+    c.save(); c.rotate(st.cdi.crs * Math.PI / 180);
+    for (const k of [-2, -1, 1, 2]) { c.beginPath(); c.arc(k * dot, 0, 4, 0, Math.PI * 2); c.lineWidth = 1.6; c.strokeStyle = '#fff'; c.stroke(); }
+    p.line(0, -r + 20, 0, -r * 0.46, col, 4);
+    p.poly([[0, -r + 14], [-9, -r + 30], [9, -r + 30]], col);
+    p.line(0, r * 0.46, 0, r - 18, col, 4);
+    if (st.cdi.dev != null) {
+      const x = Math.max(-2.1, Math.min(2.1, st.cdi.dev * 2)) * dot;
+      p.line(x, -r * 0.42, x, r * 0.42, col, 4);
+    }
+    c.restore();
+  }
   // track diamond (magenta, G1000 ground-track marker)
   if (st.gs > 20) {
     c.save(); c.rotate(st.trk * Math.PI / 180);
@@ -184,6 +199,11 @@ function hsi(p, st, cx, cy, r) {
   // labels: track + bearing target
   if (st.gs > 20) p.text(`TRK ${String(Math.round(st.trk) % 360 || 360).padStart(3, '0')}°`, cx - r - 4, cy + r + 4, NUM, 14, MAGENTA, 'left');
   if (st.brgLabel) p.text(st.brgLabel, cx + r + 4, cy + r + 4, NUM, 14, CYAN, 'right');
+  if (st.cdi) {
+    const col = st.cdi.src === 'GPS' ? MAGENTA : GREEN;
+    p.text(st.cdi.src === 'GPS' ? 'GPS' : st.cdi.src.replace('NAV', 'VOR'), cx - r * 0.5, cy - r * 0.18, LABEL, 18, col, 'center');
+    if (st.cdi.crs != null) p.text(`CRS ${String(Math.round(st.cdi.crs) % 360 || 360).padStart(3, '0')}°`, cx - r - 4, cy - r - 20, NUM, 14, col, 'left');
+  }
 }
 
 function heart(c, x, y, size, color) {
@@ -198,15 +218,26 @@ function heart(c, x, y, size, color) {
 }
 
 // ---------------------------------------------------------------- header + stats
+// radio line (G1000 logs): COM1 frequency + station in cyan, NAV1 in green
+function radioParts(st) {
+  const parts = [];
+  if (st.com) parts.push([`COM1 ${st.com.freq.toFixed(3)}${st.com.name ? ' ' + st.com.name.toUpperCase() : ''}`, CYAN]);
+  if (st.nav) parts.push([`NAV1 ${st.nav.freq.toFixed(2)}${st.nav.name ? ' ' + st.nav.name.split(' ')[0] : ''}`, GREEN]);
+  return parts;
+}
 function headerLeft(p, st, x, y) {
   const l1 = st.title, l2a = st.lesson, l2b = st.phase ? '  ·  ' + st.phase : '', l3 = st.place || '';
-  const w = Math.max(p.width(l1, LABEL, 27), p.width(l2a + l2b, LABEL, 24), p.width(l3, LABEL, 21)) + 38;
-  const h = l3 ? 108 : 80;
+  const rp = radioParts(st), sep = '   ';
+  const l4w = rp.reduce((a, [t]) => a + p.width(t + sep, LABEL, 19), 0);
+  const w = Math.max(p.width(l1, LABEL, 27), p.width(l2a + l2b, LABEL, 24), p.width(l3, LABEL, 21), l4w) + 38;
+  const h = (l3 ? 108 : 80) + (rp.length ? 27 : 0);
   p.panel(x, y, w, h, 10);
   p.text(l1, x + 18, y + 33, LABEL, 27, INK);
   const w2 = p.text(l2a, x + 18, y + 66, LABEL, 24, DIM);
   if (l2b) p.text(l2b, x + 18 + w2, y + 66, LABEL, 24, CYAN);
   if (l3) p.text(l3, x + 18, y + 95, LABEL, 21, st.legColor || MAGENTA);
+  let rx = x + 18;
+  for (const [t, col] of rp) rx += p.text(t + sep, rx, y + h - 13, LABEL, 19, col);
   return { w, h };
 }
 
@@ -254,7 +285,8 @@ function windBadge(p, st, x, y) {
   p.text('WIND', x - r - 6, y - 6, LABEL, 15, DIM, 'right');
   p.text(`${Math.round(st.wind)} KT`, x - r - 6, y + 12, NUM, 15, INK, 'right');
   p.text(`${String(Math.round(st.windFrom) % 360 || 360).padStart(3, '0')}°`, x + r + 6, y + 12, NUM, 15, INK, 'left');
-  c.save(); c.translate(x, y + 2); c.rotate((st.windFrom - st.hdg + 180) * Math.PI / 180);
+  // the head is drawn at +r (screen down = relative bearing 180°), so rotating by (from − hdg) aims it downwind
+  c.save(); c.translate(x, y + 2); c.rotate((st.windFrom - st.hdg) * Math.PI / 180);
   p.line(0, -r, 0, r, CYAN, 2.4);
   p.poly([[0, r + 2], [-6, r - 8], [6, r - 8]], CYAN);
   c.restore();
@@ -273,6 +305,69 @@ function smallValues(p, st, x, y) {
     const w2 = p.text(v, x + w + 8, yy, NUM, 20, INK);
     if (u) p.text(u, x + w + 8 + w2 + 4, yy, LABEL, 16, DIM);
   });
+}
+
+// G1000 EIS-style engine strip: horizontal bar gauges with green/amber/red arcs, CHT/EGT columns per cylinder
+const GAUGES = [
+  // label, key, unit, min, max, [green lo, hi], amber above (or null), red above, decimals
+  ['RPM', 'rpm', '', 0, 2800, [2100, 2700], null, 2700, 0],
+  ['MAN', 'map', 'IN', 10, 30, [15, 30], null, 30, 1],
+  ['FFLOW', 'ff', 'GPH', 0, 20, [0, 20], null, 20, 1],
+  ['OIL T', 'oilt', '°F', 100, 250, [170, 220], 220, 245, 0],
+  ['OIL P', 'oilp', 'PSI', 0, 115, [55, 95], 95, 115, 0],
+];
+function engineHeight(st) { return 38 + GAUGES.filter((g) => st.eng[g[1]] != null).length * 30 + 112 + 58; }
+function engine(p, st, x, y, w) {
+  const e = st.eng, rows = GAUGES.filter((g) => e[g[1]] != null);
+  const h = engineHeight(st);
+  p.panel(x, y, w, h, 10);
+  p.text('ENGINE', x + 16, y + 26, LABEL, 18, DIM);
+  if (e.fuelUsed != null) p.text(`${e.fuelUsed.toFixed(1)} GAL USED`, x + w - 16, y + 26, NUM, 14, CYAN, 'right');
+  const bx = x + 78, bw = w - 78 - 86;
+  rows.forEach(([k, key, u, lo, hi, green, amber, red, nd], i) => {
+    const yy = y + 50 + i * 30, v = e[key], X = (q) => bx + (Math.max(lo, Math.min(hi, q)) - lo) / (hi - lo) * bw;
+    p.text(k, x + 16, yy + 6, LABEL, 17, DIM);
+    p.ctx.fillStyle = 'rgba(255,255,255,.12)'; p.ctx.fillRect(bx, yy - 4, bw, 8);
+    p.ctx.fillStyle = 'rgba(74,222,128,.75)'; p.ctx.fillRect(X(green[0]), yy - 4, X(green[1]) - X(green[0]), 8);
+    if (amber != null) { p.ctx.fillStyle = 'rgba(255,204,0,.8)'; p.ctx.fillRect(X(amber), yy - 4, X(red) - X(amber), 8); }
+    p.ctx.fillStyle = RED; p.ctx.fillRect(X(red) - 2, yy - 7, 3, 14);
+    const px = X(v);
+    p.poly([[px, yy + 3], [px - 7, yy - 11], [px + 7, yy - 11]], '#fff');
+    const warn = v >= red ? RED : amber != null && v >= amber ? YELLOW : INK;
+    p.text(v.toFixed(nd), x + w - 16 - (u ? p.width(u, LABEL, 13) + 5 : 0), yy + 7, NUM, 18, warn, 'right');
+    if (u) p.text(u, x + w - 16, yy + 7, LABEL, 13, DIM, 'right');
+  });
+  // CHT / EGT columns, cylinder 1–4; hottest CHT outlined
+  const top = y + 50 + rows.length * 30, colW = 16, gap = 10;
+  const bars = (vals, lo, hi, x0, label, unit, warnAt) => {
+    p.text(label, x0, top + 12, LABEL, 16, DIM);
+    const hot = vals.indexOf(Math.max(...vals.map((v) => v ?? -1)));
+    vals.forEach((v, k) => {
+      const bx0 = x0 + k * (colW + gap), by0 = top + 22, bh = 72;
+      p.ctx.fillStyle = 'rgba(255,255,255,.12)'; p.ctx.fillRect(bx0, by0, colW, bh);
+      if (v != null) {
+        const f = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+        p.ctx.fillStyle = warnAt != null && v >= warnAt ? YELLOW : CYAN; p.ctx.fillRect(bx0, by0 + bh * (1 - f), colW, bh * f);
+      }
+      if (k === hot) { p.ctx.strokeStyle = '#fff'; p.ctx.lineWidth = 1.5; p.ctx.strokeRect(bx0 - 1.5, by0 - 1.5, colW + 3, bh + 3); }
+      p.text(String(k + 1), bx0 + colW / 2, by0 + bh + 16, NUM, 12, DIM, 'center', false);
+    });
+    const mx = Math.max(...vals.map((v) => v ?? -1));
+    if (mx > 0) p.text(`${Math.round(mx)}${unit}`, x0 + 4 * (colW + gap) - gap, top + 12, NUM, 14, INK, 'right');
+  };
+  if (e.cht) bars(e.cht, 100, 500, x + 16, 'CHT', '°F', 400);
+  if (e.egt) bars(e.egt, 800, 1600, x + w / 2 + 6, 'EGT', '°F', null);
+  const fy = top + 138;
+  if (e.fuelRem != null) {
+    p.text('FUEL', x + 16, fy + 6, LABEL, 17, DIM);
+    p.text(`${e.fuelRem.toFixed(1)} GAL`, x + 78, fy + 7, NUM, 18, e.fuelRem < 10 ? YELLOW : INK);
+    if (e.endurance != null) p.text(`${Math.floor(e.endurance / 60)}:${String(Math.round(e.endurance % 60)).padStart(2, '0')} LEFT`, x + w - 16, fy + 7, NUM, 14, DIM, 'right');
+  }
+  if (e.volts != null) {
+    p.text('VOLTS', x + 16, fy + 34, LABEL, 17, DIM);
+    p.text(e.volts.toFixed(1), x + 78, fy + 35, NUM, 18, e.volts < 25 ? YELLOW : INK);
+  }
+  return h;
 }
 
 // ---------------------------------------------------------------- layout
@@ -300,6 +395,11 @@ export function drawOverlay(ctx, rect, st, { compact = false, scale = null } = {
     smallValues(p, st, cx + r + 40, H - m - 250);
     windBadge(p, st, cx + r + 92, H - m - 78);
     if (!compact && st.stats) statsCard(p, st, W - m - 300, H - m - (44 + st.stats.length * 30), 300);
+    // engine strip bottom-right, beside the stats card (the middle stays clear for the aircraft)
+    if (!compact && st.eng && W - m - 300 - 12 - 320 > cx + r + 330) {
+      const h = engineHeight(st);
+      engine(p, st, W - m - 300 - 12 - 320, H - m - h, 320);
+    }
   }
   ctx.restore();
 }

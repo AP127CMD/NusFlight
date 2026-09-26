@@ -40,12 +40,17 @@
   <button data-cam="free" title="Free — pan anywhere (4)">Free</button>
   <button id="overview" title="Whole flight (O)">Overview</button>
   <button id="export-open" title="Export an MP4 video">Video ⤓</button>
+  <button id="debrief-open" title="Lesson debrief (D)">Debrief</button>
   <label class="colorby">Path
     <select id="colorby" aria-label="Colour the path by">
       <option value="alt">Altitude</option>
       <option value="gs">Groundspeed</option>
       <option value="vs">Vertical speed</option>
       <option value="hr">Heart rate</option>
+      <option value="ias" data-needs="ias">Airspeed (IAS)</option>
+      <option value="altdev" data-needs="levels">Altitude vs cruise level</option>
+      <option value="cht" data-needs="cht1">Cylinder head temp</option>
+      <option value="wind" data-needs="wind">Wind speed</option>
       <option value="plain">Plain</option>
     </select>
   </label>
@@ -62,8 +67,17 @@
   <div class="tl-wrap">
     <canvas id="timeline" aria-label="Timeline — drag to scrub"></canvas>
     <div class="tl-times"><span id="tl-now">00:00</span><span id="tl-end">/ 00:00</span></div>
+    <div id="tl-tip" class="tl-tip" hidden></div>
   </div>
 </section>
+
+<aside id="debrief" class="panel" aria-label="Lesson debrief" hidden>
+  <header class="db-head">
+    <div><div class="db-kicker">Debrief</div><h2 id="db-title">—</h2></div>
+    <button id="debrief-close" class="icon-btn" aria-label="Close debrief">✕</button>
+  </header>
+  <div id="db-body" class="db-body"></div>
+</aside>
 
 <div id="toast" class="toast" hidden></div>
 

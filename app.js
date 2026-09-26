@@ -6,6 +6,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { drawOverlay } from './overlay.js';
 import { exportVideo } from './export.js';
+import { renderDebrief } from './debrief.js';
 
 const maplibregl = window.maplibregl;
 const FT = 0.3048;
@@ -205,8 +206,15 @@ async function loadFlight(id, t = 0) {
   S.t = Math.min(t, F.T[F.n - 1]);
   S.playing = false;
   S.terrainOffset = 0; S.offsetTries = 0; world.position.z = 0;
+  // path colours that need G1000 data are offered only when the lesson has it
+  for (const o of $('colorby').options) {
+    const need = o.dataset.needs;
+    o.disabled = !!need && !(need === 'levels' ? F.levels.length : F.cols[need]);
+  }
+  if ($('colorby').selectedOptions[0]?.disabled) { $('colorby').value = 'alt'; S.colorBy = 'alt'; }
   buildPath();
   document.title = `${F.lesson} · Nu's Flight`;
+  if (!$('debrief').hidden) openDebrief();
   drawProfile();
   markSelected();
   toast(null);
@@ -240,7 +248,7 @@ function prepare(F) {
   for (let i = 0; i < n; i++) {
     const dt = i ? F.T[i] - F.T[i - 1] : 0, p = i ? i - 1 : 0, airborne = (c.alt[i] - (c.gnd[i] ?? c.alt[i])) > 60 && c.gs[i] > 45;
     F.air[i] = (i ? F.air[p] : 0) + (airborne ? dt : 0);
-    F.maxAlt[i] = Math.max(i ? F.maxAlt[p] : -1e9, c.alt[i]);
+    F.maxAlt[i] = Math.max(i ? F.maxAlt[p] : -1e9, c.baro ? (c.baro[i] ?? -1e9) : c.alt[i]);
     F.maxBank[i] = Math.max(i ? F.maxBank[p] : 0, airborne ? Math.abs(c.roll[i] || 0) : 0);
     F.minG[i] = Math.min(i ? F.minG[p] : 9, airborne && c.g[i] != null ? c.g[i] : 9);
     F.maxG[i] = Math.max(i ? F.maxG[p] : 0, airborne && c.g[i] != null ? c.g[i] : 0);
@@ -252,6 +260,19 @@ function prepare(F) {
     for (let i = 0; i < n; i++) F.maxIas[i] = Math.max(i ? F.maxIas[i - 1] : 0, c.ias[i] ?? 0);
   }
   F.xc = /XC|XV/.test(`${F.kind} ${F.lesson}`);
+  F.rel = (iso) => (Date.parse(iso) - Date.parse(F.t0)) / 1000;
+  if (F.analysis) {
+    const A = F.analysis;
+    // fuel on board per engine run = tank gauges at start − ∫ fuel flow since the start
+    F.runs = (A.fuel?.runs || []).map((r) => ({ t0: F.rel(r.start), t1: F.rel(r.stop), start: r.gauge_start_gal }));
+    const cff = (A.legs || []).map((l) => l.cruise?.ff).filter((v) => v);
+    F.cruiseFF = cff.length ? cff.reduce((a, b) => a + b) / cff.length : 8.5;
+    // timeline marks: every analysis event, major ones drawn tall
+    F.marks = (A.events || []).map((e) => ({ ...e, tt: F.rel(e.t) })).filter((e) => e.tt >= 0 && e.tt <= F.T[n - 1]);
+    // cruise level per leg (TOC → TOD) for the altitude-deviation path colour
+    F.levels = (A.legs || []).filter((l) => l.cruise && l.toc && l.tod).map((l) => [F.rel(l.toc), F.rel(l.tod), l.cruise.level_ft]);
+  } else { F.runs = []; F.marks = []; F.levels = []; }
+  if (c.cht1) { F.chtMax = new Float64Array(n); for (let i = 0; i < n; i++) F.chtMax[i] = Math.max(c.cht1[i] ?? 0, c.cht2[i] ?? 0, c.cht3[i] ?? 0, c.cht4[i] ?? 0) || NaN; }
   F.t0ms = Date.parse(F.t0);
   F.takeoffs = F.events.filter((e) => e.type === 'takeoff').map((e) => e.t);
   F.landings = F.events.filter((e) => e.type === 'landing').map((e) => e.t);
@@ -267,6 +288,10 @@ const RAMPS = {
   gs: [[0, '#5b6cff'], [0.5, '#2fe0b5'], [0.8, '#ffe14f'], [1, '#ff5a3c']],
   vs: [[0, '#3aa0ff'], [0.45, '#e8eef2'], [0.55, '#e8eef2'], [1, '#ff7a3c']],
   hr: [[0, '#62e3a1'], [0.5, '#ffd84f'], [1, '#ff4a4a']],
+  ias: [[0, '#5b6cff'], [0.35, '#2fe0b5'], [0.7, '#ffe14f'], [1, '#ff5a3c']],
+  cht: [[0, '#3aa0ff'], [0.6, '#2fe0b5'], [0.85, '#ffd23f'], [1, '#ff4a4a']],
+  wind: [[0, '#e8eef2'], [0.5, '#45d3e6'], [1, '#e24bd0']],
+  altdev: [[0, '#3aa0ff'], [0.375, '#9fd6ff'], [0.5, '#e8eef2'], [0.625, '#ffc27a'], [1, '#ff5a3c']],
 };
 function rampColor(ramp, x) {
   x = Math.min(1, Math.max(0, x));
@@ -286,6 +311,13 @@ function pathColors(F) {
   else if (key === 'gs') { val = (i) => c.gs[i]; lo = 0; hi = Math.max(130, F.summary.max_gs_kt); }
   else if (key === 'vs') { val = (i) => c.vs[i]; lo = -1000; hi = 1000; }
   else if (key === 'hr') { val = (i) => c.hr[i]; const h = c.hr.filter((v) => v != null); lo = h.length ? Math.min(...h) : 60; hi = h.length ? Math.max(...h) : 140; }
+  else if (key === 'ias' && c.ias) { val = (i) => c.ias[i]; lo = 50; hi = 130; }
+  else if (key === 'cht' && F.chtMax) { val = (i) => (Number.isNaN(F.chtMax[i]) ? null : F.chtMax[i]); lo = 250; hi = 420; }
+  else if (key === 'wind' && c.wind) { val = (i) => c.wind[i]; lo = 0; hi = 30; }
+  else if (key === 'altdev' && F.levels.length) {
+    val = (i) => { const L = F.levels.find(([a, b]) => F.T[i] >= a && F.T[i] <= b); return L ? (c.baro ? c.baro[i] : c.alt[i]) - L[2] : null; };
+    lo = -200; hi = 200;
+  }
   const plain = new THREE.Color('#e24bd0');
   for (let i = 0; i < n; i++) {
     const v = val ? val(i) : null;
@@ -357,8 +389,19 @@ function sample(t) {
     oat: c.oat && lerp(c.oat[i], c.oat[j], u), rpm: c.rpm && lerp(c.rpm[i], c.rpm[j], u),
     wind: c.wind && lerp(c.wind[i], c.wind[j], u),
     windfrom: c.windfrom && alerp(c.windfrom[i], c.windfrom[j], u),
-    fuel: c.fuel && lerp(c.fuel[i], c.fuel[j], u),
+    fuelused: c.fuelused && lerp(c.fuelused[i], c.fuelused[j], u),
+    ...(c.rpm ? G1K_KEYS.reduce((o, k) => { if (c[k]) o[k] = lerp(c[k][i], c[k][j], u); return o; }, {}) : {}),
+    wptbrg: c.wptbrg && alerp(c.wptbrg[i], c.wptbrg[j], u),
+    crs: c.crs && c.crs[u < 0.5 ? i : j],          // a selected course steps; never sweep it through 360
   };
+}
+const G1K_KEYS = ['baro', 'map', 'ff', 'oilt', 'oilp', 'volts', 'glat', 'hcdi', 'wptdst', 'cht1', 'cht2', 'cht3', 'cht4', 'egt1', 'egt2', 'egt3', 'egt4'];
+// the value of a change list ([[t, value, …], …]) at time t
+function trackAt(list, t) {
+  if (!list || !list.length) return null;
+  let lo = 0, hi = list.length - 1, best = null;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (list[m][0] <= t) { best = list[m]; lo = m + 1; } else hi = m - 1; }
+  return best;
 }
 
 function phaseAt(t, s) {
@@ -490,6 +533,34 @@ function place(t, s) {
   return { text: nearest ? `${nearest.d.toFixed(0)} NM from ${nearest.a.icao}` : '', legColor: '#9aa7b6' };
 }
 
+// everything the G1000 log adds to the instruments: engine strip, radios, CDI, active-waypoint bearing, slip
+function g1000State(s, t) {
+  const F = S.flight, c = F.cols, tr = F.tracks, out = { state: {} };
+  if (!c.rpm) return out;
+  const st = out.state;
+  st.glat = s.glat;
+  const run = F.runs.find((r) => t >= r.t0 - 5 && t <= r.t1 + 5);
+  const used0 = run ? sample(Math.max(0, run.t0)).fuelused ?? 0 : (c.fuelused?.[0] ?? 0);
+  const used = s.fuelused != null ? s.fuelused - used0 : null;
+  const rem = run && run.start != null && used != null ? run.start - used : null;
+  st.eng = {
+    rpm: s.rpm, map: s.map, ff: s.ff, oilt: s.oilt, oilp: s.oilp, volts: s.volts,
+    cht: c.cht1 ? [s.cht1, s.cht2, s.cht3, s.cht4] : null, egt: c.egt1 ? [s.egt1, s.egt2, s.egt3, s.egt4] : null,
+    fuelUsed: used, fuelRem: rem, endurance: rem != null ? rem / F.cruiseFF * 60 : null,
+  };
+  if (tr) {
+    const com = trackAt(tr.com1, t), nav = trackAt(tr.nav1, t), hsi = trackAt(tr.hsi, t), wpt = trackAt(tr.wpt, t);
+    if (com) st.com = { freq: com[1], name: com[2] };
+    if (nav) st.nav = { freq: nav[1], name: nav[2] };
+    if (hsi && s.crs != null) st.cdi = { src: hsi[1], crs: s.crs, dev: s.hcdi };
+    if (wpt && s.wptbrg != null && s.wptdst != null && s.gs > 20) {
+      out.brg = s.wptbrg;
+      out.brgLabel = `${wpt[1]} ${s.wptdst.toFixed(1)}NM`;
+    }
+  }
+  return out;
+}
+
 function overlayState(s) {
   const F = S.flight, t = S.t, end = F.T[F.n - 1], i = Math.min(F.n - 1, s.i + (s.u > 0.5 ? 1 : 0));
   const [yy, mm, dd] = F.date.split('-');
@@ -509,17 +580,20 @@ function overlayState(s) {
   ];
   if (ahrs && F.maxG[i] > 0) stats.push(['LOAD', `${F.minG[i].toFixed(2)} – ${F.maxG[i].toFixed(2)}`, 'G']);
   if (F.cols.ias) stats.push(['MAX IAS', String(Math.round(F.maxIas[i])), 'KT']);
-  if (F.cols.fuel) stats.push(['FUEL USED', (F.cols.fuel[0] - F.cols.fuel[i]).toFixed(1), 'GAL']);
+  if (F.cols.fuelused) stats.push(['FUEL USED', (F.cols.fuelused[i] - F.cols.fuelused[0]).toFixed(1), 'GAL']);   // ∫ fuel flow
   if (F.hrN[i]) stats.push(['HR AVG · MAX', `${Math.round(F.hrSum[i] / F.hrN[i])} · ${Math.round(F.hrMax[i])}`, 'BPM']);
   const up = F.kind ? F.kind.toUpperCase() : '';
+  const g1k = g1000State(s, t);
+  if (g1k.brg != null) { pl.brg = g1k.brg; pl.brgLabel = g1k.brgLabel; }
   return {
+    ...g1k.state,
     hasPos: true,
     title: `${d}  ·  ${CALLSIGN}  ·  ${F.tail}  ·  DA40  ·  ${F.home || 'VTPH'}`,
     lesson: `${F.lesson} · ${up}`, phase: phaseAt(t, s).toUpperCase(),
     place: pl.text, legColor: pl.legColor, brg: pl.brg, brgLabel: pl.brgLabel,
     lcl: clock(t), utc: new Date(F.t0ms + t * 1000).toISOString().slice(11, 19) + 'Z',
     hr: s.hr, hrHist,
-    gs: s.gs || 0, alt: s.alt, vs: s.vs || 0,
+    gs: s.gs || 0, alt: s.baro ?? s.alt, vs: s.vs || 0,     // G1000: the altimeter's reading, not GPS height
     agl: F.agl === 'terrain' ? s.alt - s.gnd : (S.aglNow ?? s.alt - s.gnd),
     aglValid: F.agl === 'terrain' || S.aglNow != null,
     ias: s.ias, tas: s.tas, oat: s.oat, wind: s.wind, windFrom: s.windfrom, rpm: s.rpm,
@@ -534,8 +608,9 @@ const ov = $('ov'), octx = ov.getContext('2d');
 function overlayRect() {
   const phone = window.innerWidth < 900;
   const left = document.body.classList.contains('list-open') && !phone ? 324 : 0;
+  const right = document.body.classList.contains('debrief-open') && !phone ? $('debrief').offsetWidth + 24 : 0;
   const bottom = phone ? 150 : 150;
-  return { x: left, y: 0, w: window.innerWidth - left, h: window.innerHeight - bottom, compact: phone };
+  return { x: left, y: 0, w: window.innerWidth - left - right, h: window.innerHeight - bottom, compact: phone };
 }
 function drawLive(s) {
   const dpr = Math.min(2, window.devicePixelRatio || 1), W = window.innerWidth, H = window.innerHeight;
@@ -609,9 +684,48 @@ function drawProfile() {
     c.fillRect(x - 0.5, 14, 1.5, H - 14);
     c.beginPath(); c.moveTo(x, 14); c.lineTo(x - 3.5, 8); c.lineTo(x + 3.5, 8); c.fill();
   }
+  // G1000 events: engine / top of climb & descent as tall ticks, radio / waypoint / HSI changes as short ones
+  for (const e of F.marks) {
+    if (RUNWAY_KINDS.has(e.kind)) continue;
+    const col = MARK_COLOR[e.kind] || '#93a4b1', x = X(e.tt);
+    c.fillStyle = col;
+    if (e.major) { c.globalAlpha = 0.9; c.fillRect(x - 0.5, 18, 1.2, H - 18); c.beginPath(); c.arc(x, 18, 2.6, 0, Math.PI * 2); c.fill(); }
+    else { c.globalAlpha = 0.85; c.fillRect(x - 0.5, H - (MARK_ROW[e.kind] || 6), 1.2, 5); }
+    c.globalAlpha = 1;
+  }
   $('tl-end').textContent = '/ ' + hms(end);
   drawCursor();
 }
+const RUNWAY_KINDS = new Set(['takeoff', 'landing', 'touch_and_go', 'low_pass']);
+const MARK_COLOR = { engine: '#ffffff', toc: '#45d3e6', tod: '#45d3e6', baro: '#f3b63f', com: '#45d3e6', nav: '#58d68d',
+  wpt: '#e24bd0', hsi: '#b7f36a', gps: '#93a4b1', ahrs: '#93a4b1', power: '#93a4b1' };
+const MARK_ROW = { com: 6, nav: 12, wpt: 18, hsi: 12, baro: 24 };
+
+// hover label + snap: the nearest mark within 6 px of the pointer
+function markNear(clientX) {
+  const F = S.flight;
+  if (!F) return null;
+  const r = tl.getBoundingClientRect(), end = F.T[F.n - 1];
+  const all = [...F.events.map((e) => ({ tt: e.t, label: `${e.tg ? 'Touch-and-go' : e.type === 'takeoff' ? 'Take-off' : 'Landing'}${e.ad ? ' ' + e.ad : ''}` })),
+    ...F.marks.filter((m) => !RUNWAY_KINDS.has(m.kind))];
+  let best = null;
+  for (const m of all) {
+    const d = Math.abs(r.left + (m.tt / end) * r.width - clientX);
+    if (d <= 6 && (!best || d < best.d)) best = { ...m, d };
+  }
+  return best;
+}
+const tip = $('tl-tip');
+tl.addEventListener('pointermove', (e) => {
+  if (!S.flight || tl.hasPointerCapture(e.pointerId)) { tip.hidden = true; return; }
+  const r = tl.getBoundingClientRect(), m = markNear(e.clientX);
+  const t = m ? m.tt : Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * S.flight.T[S.flight.n - 1];
+  tip.textContent = `${clock(t).slice(0, 8)}${m ? '  ·  ' + m.label : ''}`;
+  tip.style.left = `${Math.min(r.width - 10, Math.max(10, e.clientX - r.left))}px`;
+  tip.hidden = false;
+});
+tl.addEventListener('pointerleave', () => { tip.hidden = true; });
+
 function drawCursor() {
   if (!profile || !S.flight || !profile.width || !profile.height) return;
   const dpr = profile.width / (tl.clientWidth || 1);
@@ -628,7 +742,12 @@ function scrubTo(ev) {
   S.t = u * S.flight.T[S.flight.n - 1];
   S.dirty = true;
 }
-tl.addEventListener('pointerdown', (e) => { if (!S.flight) return; tl.setPointerCapture(e.pointerId); scrubTo(e); });
+tl.addEventListener('pointerdown', (e) => {
+  if (!S.flight) return;
+  const m = markNear(e.clientX);
+  if (m) { S.t = Math.max(0, m.tt - 5); S.dirty = true; return; }   // click a marker: jump just before it
+  tl.setPointerCapture(e.pointerId); scrubTo(e);
+});
 tl.addEventListener('pointermove', (e) => { if (tl.hasPointerCapture(e.pointerId)) scrubTo(e); });
 new ResizeObserver(() => drawProfile()).observe(tl);
 
@@ -721,15 +840,32 @@ window.addEventListener('keydown', (e) => {
   else if (k === '3') setCam('cockpit');
   else if (k === '4') setCam('free');
   else if (k === 'o' || k === 'O') overview();
+  else if (k === 'd' || k === 'D') ($('debrief').hidden ? openDebrief() : closeDebrief());
   else if (k === 'f' || k === 'F') toggleList();
   else if (k === 'n' || k === 'N') jumpEvent(1);
   else if (k === 'p' || k === 'P') jumpEvent(-1);
 });
 function jumpEvent(dir) {
-  const ev = S.flight.events.map((e) => e.t - 20);
+  const F = S.flight;
+  const ev = [...F.events.map((e) => e.t - 20), ...F.marks.filter((m) => m.major || m.kind === 'wpt' || m.kind === 'com').map((m) => m.tt - 5)]
+    .sort((a, b) => a - b);
   const t = dir > 0 ? ev.find((x) => x > S.t + 1) : [...ev].reverse().find((x) => x < S.t - 1);
   if (t != null) { S.t = Math.max(0, t); S.dirty = true; }
 }
+
+// ---------------------------------------------------------------- debrief panel
+function openDebrief() {
+  const F = S.flight;
+  if (!F) return;
+  $('db-title').textContent = `${F.lesson} · ${F.date}`;
+  renderDebrief($('db-body'), F, { index: S.index, clock, hms, jump: (t) => { S.t = Math.min(t, F.T[F.n - 1]); S.dirty = true; } });
+  $('debrief').hidden = false;
+  document.body.classList.add('debrief-open');
+  S.dirty = true;
+}
+function closeDebrief() { $('debrief').hidden = true; document.body.classList.remove('debrief-open'); S.dirty = true; }
+$('debrief-open').addEventListener('click', () => ($('debrief').hidden ? openDebrief() : closeDebrief()));
+$('debrief-close').addEventListener('click', closeDebrief);
 
 // ---------------------------------------------------------------- flight list
 function toggleList(force) {
