@@ -12,14 +12,13 @@ const maplibregl = window.maplibregl;
 const FT = 0.3048;
 const SPEEDS = [1, 2, 5, 10, 20, 50, 100, 200];
 const TZ = 'Asia/Bangkok';
-const CALLSIGN = 'NGT';
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------- state
 const S = {
   index: [], flight: null, t: 0, playing: false, speed: 10, cam: 'chase',
   chaseOffset: 0, look: { yaw: 0, pitch: 0 }, lastBearing: null, smoothBearing: null,
-  terrainOffset: 0, offsetTries: 0, colorBy: 'alt', dirty: true,
+  terrainOffset: 0, offsetTries: 0, colorBy: 'alt', dirty: true, student: null,
 };
 
 // ---------------------------------------------------------------- map
@@ -75,7 +74,16 @@ sun.position.set(-0.4, -0.6, 1).normalize();
 scene.add(sun);
 
 const callsignMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-document.fonts.load('800 150px "Barlow Condensed"').finally(() => { callsignMat.map = callsignTexture(CALLSIGN); callsignMat.needsUpdate = true; });
+let wingText = null;
+function setCallsign(text) {
+  if (text === wingText) return;
+  wingText = text;
+  document.fonts.load('800 150px "Barlow Condensed"').finally(() => {
+    callsignMat.map?.dispose();
+    callsignMat.map = callsignTexture(text); callsignMat.needsUpdate = true; S.dirty = true;
+  });
+}
+setCallsign('DA40');
 const aircraft = buildAircraft();
 world.add(aircraft);
 const dropGeom = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
@@ -113,8 +121,12 @@ function callsignTexture(text) {
   cv.width = 512; cv.height = 160;
   const c = cv.getContext('2d');
   c.fillStyle = '#16305a';
-  c.font = '800 150px "Barlow Condensed", "Arial Narrow", sans-serif';
   c.textAlign = 'center'; c.textBaseline = 'middle';
+  let size = 150;   // shrink to fit longer callsigns (e.g. "S-WITCH") within the texture width
+  for (; size > 50; size -= 6) {
+    c.font = `800 ${size}px "Barlow Condensed", "Arial Narrow", sans-serif`;
+    if (c.measureText(text).width <= cv.width - 48) break;
+  }
   c.fillText(text, 256, 88);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -188,20 +200,54 @@ function buildAircraft() {
 async function loadIndex() {
   const r = await fetch('flights/index.json', { cache: 'no-cache' });
   const d = await r.json();
-  S.index = d.flights;
+  // other AP127 students' lessons are published separately (flights/ap127/index.json, git-ignored in the
+  // site repo) — a 404 just means only the owner's lessons are here, not an error
+  let apFlights = [], apStudents = [];
+  try {
+    const r2 = await fetch('flights/ap127/index.json', { cache: 'no-cache' });
+    if (r2.ok) {
+      const d2 = await r2.json();
+      apFlights = d2.flights || [];
+      apStudents = d2.students || [];
+    }
+  } catch { /* owner-only build */ }
+  // both files are newest-first on their own; merge keeping that order across the two
+  S.index = [...d.flights, ...apFlights].sort((a, b) => (b.block_off_utc || '').localeCompare(a.block_off_utc || ''));
   S.aerodromes = d.aerodromes || [];
+  S.students = [...(d.students || []), ...apStudents];
+  const sel = $('student');
+  sel.textContent = '';
+  sel.appendChild(new Option(`All students (${S.students.length})`, '*'));
+  for (const s of S.students) sel.appendChild(new Option(`${s.callsign} · ${s.name} (${s.lessons})`, s.name));
+  const wantS = decodeURIComponent((location.hash.match(/s=([^&]+)/) || [])[1] || '');
+  S.student = wantS && (wantS === '*' || S.students.some((s) => s.name === wantS)) ? wantS : (S.students[0]?.name ?? '*');
+  sel.value = S.student;
+  sel.addEventListener('change', () => {
+    S.student = sel.value;
+    writeHash(true);
+    renderList();
+    const pool = S.index.filter((f) => S.student === '*' || f.student === S.student);
+    const next = pool.find((f) => f.source === 'ahrs') || pool.find((f) => f.source);
+    if (next) { loadFlight(next.id); return; }
+    toast(`No tracks for ${S.student}`);
+    document.querySelectorAll('.fl').forEach((b) => b.setAttribute('aria-selected', 'false'));
+  });
   renderList();
   const want = decodeURIComponent((location.hash.match(/f=([^&]+)/) || [])[1] || '');
   const t = +((location.hash.match(/t=(\d+)/) || [])[1] || 0);
-  const first = S.index.find((f) => f.id === want && f.source) || S.index.find((f) => f.source === 'ahrs') || S.index.find((f) => f.source);
+  const pool = S.index.filter((f) => S.student === '*' || f.student === S.student);
+  const first = pool.find((f) => f.id === want && f.source) || pool.find((f) => f.source === 'ahrs') || pool.find((f) => f.source);
   if (first) await loadFlight(first.id, t);
 }
 
 async function loadFlight(id, t = 0) {
   toast('Loading flight…');
-  const r = await fetch(`flights/${encodeURIComponent(id)}.json`, { cache: 'no-cache' });
+  const item = S.index.find((f) => f.id === id);
+  const path = item?.file ? item.file.split('/').map(encodeURIComponent).join('/') : encodeURIComponent(id);
+  const r = await fetch(`flights/${path}.json`, { cache: 'no-cache' });
   const F = await r.json();
   prepare(F);
+  setCallsign(F.callsign || F.tail?.replace(/^HS-/, '') || 'DA40');
   S.flight = F;
   S.t = Math.min(t, F.T[F.n - 1]);
   S.playing = false;
@@ -585,11 +631,12 @@ function overlayState(s) {
   const up = F.kind ? F.kind.toUpperCase() : '';
   const g1k = g1000State(s, t);
   if (g1k.brg != null) { pl.brg = g1k.brg; pl.brgLabel = g1k.brgLabel; }
+  const otherStudent = !F.owner;
   return {
     ...g1k.state,
     hasPos: true,
-    title: `${d}  ·  ${CALLSIGN}  ·  ${F.tail}  ·  DA40  ·  ${F.home || 'VTPH'}`,
-    lesson: `${F.lesson} · ${up}`, phase: phaseAt(t, s).toUpperCase(),
+    title: `${d}  ·  ${F.callsign || F.tail}  ·  ${F.tail}  ·  DA40  ·  ${F.home || 'VTPH'}`,
+    lesson: otherStudent ? `${F.student} · ${F.lesson} · ${up}` : `${F.lesson} · ${up}`, phase: phaseAt(t, s).toUpperCase(),
     place: pl.text, legColor: pl.legColor, brg: pl.brg, brgLabel: pl.brgLabel,
     lcl: clock(t), utc: new Date(F.t0ms + t * 1000).toISOString().slice(11, 19) + 'Z',
     hr: s.hr, hrHist,
@@ -858,7 +905,8 @@ function openDebrief() {
   const F = S.flight;
   if (!F) return;
   $('db-title').textContent = `${F.lesson} · ${F.date}`;
-  renderDebrief($('db-body'), F, { index: S.index, clock, hms, jump: (t) => { S.t = Math.min(t, F.T[F.n - 1]); S.dirty = true; } });
+  renderDebrief($('db-body'), F, { index: S.index.filter((f) => f.student === F.student), clock, hms,
+    jump: (t) => { S.t = Math.min(t, F.T[F.n - 1]); S.dirty = true; } });
   $('debrief').hidden = false;
   document.body.classList.add('debrief-open');
   S.dirty = true;
@@ -883,8 +931,9 @@ function renderList() {
   const box = $('flights');
   box.textContent = '';
   let month = null;
-  for (const f of S.index) {
-    const hay = `${f.lesson} ${f.tail} ${f.date} ${f.kind} ${f.instructor || ''}`.toLowerCase();
+  const all = S.student === '*' ? S.index : S.index.filter((f) => f.student === S.student);
+  for (const f of all) {
+    const hay = `${f.lesson} ${f.tail} ${f.date} ${f.kind} ${f.instructor || ''} ${f.student || ''} ${f.callsign || ''}`.toLowerCase();
     if (q && !hay.includes(q)) continue;
     const d = new Date(f.date + 'T00:00:00');
     const m = d.toLocaleString('en-GB', { month: 'long', year: 'numeric' });
@@ -898,15 +947,16 @@ function renderList() {
       <span class="fl-right"><span class="badge ${f.source || 'none'}">${BADGE[f.source] || 'no track'}</span><span class="fl-dur">${dur}</span></span>
       <span class="fl-meta"></span>`;
     b.querySelector('.fl-lesson').textContent = f.lesson;
-    b.querySelector('.fl-meta').textContent = `${f.kind} · ${f.tail}${f.summary ? ` · ${f.summary.landings} ldg · ${Math.round(f.summary.distance_nm)} nm` : ''}`;
+    const meta = `${f.kind} · ${f.tail}${f.summary ? ` · ${f.summary.landings} ldg · ${Math.round(f.summary.distance_nm)} nm` : ''}`;
+    b.querySelector('.fl-meta').textContent = S.student === '*' ? `${f.callsign} · ${meta}` : meta;
     b.title = f.source ? `${f.lesson} — airborne ${dur}` : 'No position data for this flight (before Spidertracks / no Garmin GPS)';
     b.addEventListener('click', () => { loadFlight(f.id); if (window.innerWidth < 900) toggleList(false); });
     box.append(b);
   }
-  const have = S.index.filter((f) => f.source).length;
-  const measured = S.index.filter((f) => f.attitude === 'ahrs' || f.attitude === 'g1000').length;
-  const panel = S.index.filter((f) => f.source === 'g1000').length;
-  $('list-foot').innerHTML = `<b>${have}</b> of ${S.index.length} flights have a track · <b>${measured}</b> with measured attitude` +
+  const have = all.filter((f) => f.source).length;
+  const measured = all.filter((f) => f.attitude === 'ahrs' || f.attitude === 'g1000').length;
+  const panel = all.filter((f) => f.source === 'g1000').length;
+  $('list-foot').innerHTML = `<b>${have}</b> of ${all.length} flights have a track · <b>${measured}</b> with measured attitude` +
     (panel ? ` (<b>${panel}</b> from the aircraft's G1000 log)` : '') + `. GPS / 15 s tracks show estimated attitude.`;
   markSelected();
 }
@@ -927,7 +977,11 @@ function hms(t) {
 let hashTimer = 0;
 function writeHash(now) {
   clearTimeout(hashTimer);
-  const go = () => S.flight && history.replaceState(null, '', `#f=${encodeURIComponent(S.flight.id)}&t=${Math.round(S.t)}`);
+  const go = () => {
+    const s = `s=${encodeURIComponent(S.student ?? '*')}`;
+    const ft = S.flight ? `&f=${encodeURIComponent(S.flight.id)}&t=${Math.round(S.t)}` : '';
+    history.replaceState(null, '', `#${s}${ft}`);
+  };
   if (now) go(); else hashTimer = setTimeout(go, 400);
 }
 function toast(msg) { const t = $('toast'); t.hidden = !msg; if (msg) t.textContent = msg; }

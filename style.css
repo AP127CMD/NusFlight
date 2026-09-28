@@ -49,6 +49,16 @@ body:not(.list-open) #list { transform: translateX(calc(-100% - 2 * var(--gut)))
 .list-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 8px; }
 .brand { font: 600 17px/1 var(--cond); letter-spacing: .04em; text-transform: uppercase; }
 .brand-mark { color: #0a0f14; background: var(--cyan); border-radius: 4px; padding: 2px 5px; margin-right: 6px; font-size: 13px; }
+.student-pick {
+  display: block; margin: 0 14px 10px; font: 600 12px/1 var(--cond); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.student-pick select {
+  display: block; width: 100%; margin-top: 6px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05); color: var(--ink); outline: none; font: 600 13px/1.2 var(--ui); text-transform: none;
+}
+.student-pick select:focus { border-color: var(--cyan); }
+.student-pick option { background: #0e151b; }
 #search {
   margin: 0 14px 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.05); outline: none;

@@ -5,7 +5,8 @@ instruments, flight phase / legs / heart rate, chase · orbit · cockpit cameras
 
 Live: https://nus-flight.pages.dev
 
-This repo is a **build output** — do not edit it by hand. Source and data pipeline live in the flightvid
-project (`~/CLAUDE/Flight Footage`, `flightvid/replay.py` + `flightvid/replay_web/`); publish with
-`./fv replay --deploy` (after `./fv sync`), which rebuilds this folder, commits, pushes and runs
-`wrangler pages deploy`.
+This repo is a **build output** — do not edit it by hand. The app and Nu's lessons live here; every other AP127
+student's lessons are built from the private Spidertracks archive and published to Cloudflare Pages only
+(`flights/ap127/`, git-ignored). Source and data pipeline live in the flightvid project (`~/CLAUDE/Flight Footage`,
+`flightvid/replay.py` + `flightvid/replay_web/`); publish with `./fv replay --deploy` (after `./fv sync`), which
+rebuilds this folder, commits, pushes and runs `wrangler pages deploy`.
