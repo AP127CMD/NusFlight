@@ -372,6 +372,21 @@ function engine(p, st, x, y, w) {
 
 // ---------------------------------------------------------------- layout
 // rect = {x, y, w, h} in canvas pixels; compact = narrow phone layout (header stacked, no stats card)
+// the instrument cluster (speed tape · attitude · altitude tape + VSI · HSI · small values · wind) with its lower
+// edge at H − m; shared by the full overlay and by drawPanel() so both always draw the same gauges
+function cluster(p, st, m, H) {
+  const cx = m + 226, adiY = H - m - 470, r = 105;
+  const spd = st.ias != null ? st.ias : st.gs;      // G1000 logs give real indicated airspeed
+  tape(p, m + 6, adiY - 125, 78, 250, spd, 4.0, 5, 10, st.ias != null ? 'IAS' : 'GS', 'KT', st.gsTrend, 'left');
+  attitude(p, st, cx, adiY, r);
+  tape(p, cx + r + 22, adiY - 125, 90, 250, st.alt, 0.40, 20, 100, 'ALT', 'FT', st.altTrend, 'right');
+  vsi(p, st, cx + r + 118, adiY - 105, 22, 210);
+  hsi(p, st, cx, H - m - 128, 118);
+  smallValues(p, st, cx + r + 40, H - m - 250);
+  windBadge(p, st, cx + r + 92, H - m - 78);
+  return { cx, adiY, r };
+}
+
 export function drawOverlay(ctx, rect, st, { compact = false, scale = null } = {}) {
   const s = scale || (compact ? Math.min(rect.w / 680, rect.h / 1450) : Math.max(0.42, Math.min(1.25, rect.h / 1080, rect.w / 1750)));
   const W = rect.w / s, H = rect.h / s;
@@ -385,21 +400,35 @@ export function drawOverlay(ctx, rect, st, { compact = false, scale = null } = {
   else headerRight(p, st, W - m - 330, m);
   if (st.hasPos) {
     // instrument cluster, bottom-left: GS tape · attitude · ALT tape + VSI, HSI underneath
-    const cx = m + 226, adiY = H - m - 470, r = 105;
-    const spd = st.ias != null ? st.ias : st.gs;      // G1000 logs give real indicated airspeed
-    tape(p, m + 6, adiY - 125, 78, 250, spd, 4.0, 5, 10, st.ias != null ? 'IAS' : 'GS', 'KT', st.gsTrend, 'left');
-    attitude(p, st, cx, adiY, r);
-    tape(p, cx + r + 22, adiY - 125, 90, 250, st.alt, 0.40, 20, 100, 'ALT', 'FT', st.altTrend, 'right');
-    vsi(p, st, cx + r + 118, adiY - 105, 22, 210);
-    hsi(p, st, cx, H - m - 128, 118);
-    smallValues(p, st, cx + r + 40, H - m - 250);
-    windBadge(p, st, cx + r + 92, H - m - 78);
+    const { cx, r } = cluster(p, st, m, H);
     if (!compact && st.stats) statsCard(p, st, W - m - 300, H - m - (44 + st.stats.length * 30), 300);
     // engine strip bottom-right, beside the stats card (the middle stays clear for the aircraft)
     if (!compact && st.eng && W - m - 300 - 12 - 320 > cx + r + 330) {
       const h = engineHeight(st);
       engine(p, st, W - m - 300 - 12 - 320, H - m - h, 320);
     }
+  }
+  ctx.restore();
+}
+
+// Instruments only, for a panel of its own (IFR Approach Lab): the cluster on the left, the engine strip and a radio /
+// waypoint box on the right, in a 980 × 640 design box scaled to fit `rect` and centred in it.
+export const PANEL_W = 980, PANEL_H = 640;
+export function drawPanel(ctx, rect, st) {
+  const s = Math.min(rect.w / PANEL_W, rect.h / PANEL_H);
+  const p = P(ctx);
+  ctx.save();
+  ctx.translate(rect.x + (rect.w - PANEL_W * s) / 2, rect.y + (rect.h - PANEL_H * s) / 2); ctx.scale(s, s);
+  cluster(p, st, 24, PANEL_H);
+  let y = 24;
+  if (st.eng) { engine(p, st, 650, y, 320); y += engineHeight(st) + 12; }
+  const rows = [];
+  if (st.com) rows.push(['COM1', `${st.com.freq.toFixed(3)}${st.com.name ? '  ' + st.com.name.toUpperCase() : ''}`, CYAN]);
+  if (st.nav) rows.push(['NAV1', `${st.nav.freq.toFixed(2)}${st.nav.name ? '  ' + st.nav.name.split(' ')[0] : ''}`, GREEN]);
+  if (st.brgLabel) rows.push(['WPT', st.brgLabel, MAGENTA]);
+  if (rows.length) {
+    p.panel(650, y, 320, 16 + rows.length * 28, 10);
+    rows.forEach(([k, v, col], i) => { p.text(k, 666, y + 30 + i * 28, LABEL, 17, DIM); p.text(v, 722, y + 30 + i * 28, LABEL, 19, col); });
   }
   ctx.restore();
 }
