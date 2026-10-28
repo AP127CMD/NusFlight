@@ -44,6 +44,7 @@
   <button id="overview" title="Whole flight (O)">Overview</button>
   <button id="export-open" title="Export an MP4 video">Video ⤓</button>
   <button id="debrief-open" title="Lesson debrief (D)">Debrief</button>
+  <button id="wx-toggle" title="Weather — satellite cloud, rain, radar (W)" aria-pressed="true">Weather</button>
   <label class="colorby">Path
     <select id="colorby" aria-label="Colour the path by">
       <option value="alt">Altitude</option>
@@ -82,6 +83,7 @@
   <div id="db-body" class="db-body"></div>
 </aside>
 
+<div id="wx-readout" class="panel" aria-live="off" hidden></div>
 <div id="toast" class="toast" hidden></div>
 
 <dialog id="export" aria-labelledby="x-title">

@@ -398,6 +398,7 @@ export function drawOverlay(ctx, rect, st, { compact = false, scale = null } = {
   const hl = headerLeft(p, st, m, m);
   if (compact) headerRight(p, st, m, m + hl.h + 10);
   else headerRight(p, st, W - m - 330, m);
+  const headerBottom = rect.y + (compact ? m + hl.h + 10 + 80 : m + Math.max(hl.h, 80)) * s;   // canvas px
   if (st.hasPos) {
     // instrument cluster, bottom-left: GS tape · attitude · ALT tape + VSI, HSI underneath
     const { cx, r } = cluster(p, st, m, H);
@@ -409,6 +410,7 @@ export function drawOverlay(ctx, rect, st, { compact = false, scale = null } = {
     }
   }
   ctx.restore();
+  return { headerBottom };
 }
 
 // Instruments only, for a panel of its own (IFR Approach Lab): the cluster on the left, the engine strip and a radio /

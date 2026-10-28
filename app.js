@@ -7,6 +7,7 @@ import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { drawOverlay } from './overlay.js';
 import { exportVideo } from './export.js';
 import { renderDebrief } from './debrief.js';
+import { createWeather } from './wx.js';
 
 const maplibregl = window.maplibregl;
 const FT = 0.3048;
@@ -261,6 +262,7 @@ async function loadFlight(id, t = 0) {
   buildPath();
   document.title = `${F.lesson} · Nu's Flight`;
   if (!$('debrief').hidden) openDebrief();
+  wx.load(F).catch((e) => wx.fail(e));   // not awaited: the camera and profile never wait for the weather JSON
   drawProfile();
   markSelected();
   toast(null);
@@ -488,6 +490,7 @@ function metersPerPixel(lat, zoom) { return 40075016.686 * Math.cos(lat * Math.P
 
 function frame(s) {
   const F = S.flight;
+  try { wx.update(F.t0ms + S.t * 1000, s); } catch (e) { wx.fail(e); }   // weather must never stop the replay
   aircraft.position.set(s.x, s.y, s.z);
   aircraft.rotation.set((s.pitch || 0) * Math.PI / 180, (s.roll || 0) * Math.PI / 180, -s.hdg * Math.PI / 180, 'ZXY');
   const scale = Math.max(1, 44 * metersPerPixel(s.lat, map.getZoom()) / 12);   // never smaller than ~44 px on screen
@@ -665,7 +668,9 @@ function drawLive(s) {
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, W, H);
   const r = overlayRect();
-  drawOverlay(octx, r, overlayState(s), { compact: r.compact });
+  const lay = drawOverlay(octx, r, overlayState(s), { compact: r.compact });
+  // phone: the weather readout sits just under the stacked header, clear of the instrument cluster (style.css)
+  if (r.compact && lay) wxPanel.style.setProperty('--wx-top', `${Math.round(lay.headerBottom + 8)}px`);
   $('tl-now').textContent = hms(S.t);
 }
 window.addEventListener('resize', () => { S.dirty = true; });
@@ -891,6 +896,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'f' || k === 'F') toggleList();
   else if (k === 'n' || k === 'N') jumpEvent(1);
   else if (k === 'p' || k === 'P') jumpEvent(-1);
+  else if (k === 'w' || k === 'W') setWeather(!wx.on);
 });
 function jumpEvent(dir) {
   const F = S.flight;
@@ -899,6 +905,18 @@ function jumpEvent(dir) {
   const t = dir > 0 ? ev.find((x) => x > S.t + 1) : [...ev].reverse().find((x) => x < S.t - 1);
   if (t != null) { S.t = Math.max(0, t); S.dirty = true; }
 }
+
+// ---------------------------------------------------------------- weather (W)
+const wxPanel = $('wx-readout');
+const wx = createWeather(map, { panel: wxPanel });
+wx.onchange = () => { S.dirty = true; };
+function setWeather(on) {
+  wx.setOn(on);
+  $('wx-toggle').setAttribute('aria-pressed', String(wx.on));
+  S.dirty = true;
+}
+$('wx-toggle').setAttribute('aria-pressed', String(wx.on));
+$('wx-toggle').addEventListener('click', () => setWeather(!wx.on));
 
 // ---------------------------------------------------------------- debrief panel
 function openDebrief() {
@@ -992,12 +1010,14 @@ setSpeed(0);
 setCam('chase');
 map.on('style.load', () => {
   map.addLayer(layer);
+  try { wx.attach(); } catch (e) { wx.fail(e); }   // weather must never stop the map from loading
+  S.dirty = true;
   if (window.innerWidth < 900) document.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
 });   // earlier than 'load', which waits for the first tiles
 loadIndex().catch((e) => { toast('Could not load flights — run ./fv replay to build them.'); console.error(e); });
 requestAnimationFrame(loop);
 map.on('error', (e) => console.warn(e.error?.message || e));
-window.replay = { S, map, aircraft, sample, setCam };   // console debugging
+window.replay = { S, map, aircraft, sample, setCam, wx };   // console debugging
 
 // ---------------------------------------------------------------- video export
 $('export-open').addEventListener('click', () => {
