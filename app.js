@@ -10,6 +10,9 @@ import { renderDebrief } from './debrief.js';
 import { createWeather } from './wx.js';
 
 const maplibregl = window.maplibregl;
+// ?embed — inside Flight HQ (same origin): no flight list; the parent drives S.t through window.replay
+const EMBED = new URLSearchParams(location.search).has('embed');
+if (EMBED) document.documentElement.classList.add('embed');
 const FT = 0.3048;
 const SPEEDS = [1, 2, 5, 10, 20, 50, 100, 200];
 const TZ = 'Asia/Bangkok';
@@ -1005,7 +1008,7 @@ function writeHash(now) {
 function toast(msg) { const t = $('toast'); t.hidden = !msg; if (msg) t.textContent = msg; }
 
 // ---------------------------------------------------------------- boot
-if (window.innerWidth >= 900) document.body.classList.add('list-open');
+if (window.innerWidth >= 900 && !EMBED) document.body.classList.add('list-open');
 setSpeed(0);
 setCam('chase');
 map.on('style.load', () => {

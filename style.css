@@ -287,3 +287,6 @@ body.list-open .maplibregl-ctrl-bottom-left { left: calc(var(--list-w) + 2 * var
 @media (prefers-reduced-motion: reduce) {
   #list, #title, #bar { transition: none; }
 }
+
+/* ?embed (inside Flight HQ): the parent page has its own flight list and transport */
+.embed #list, .embed #list-open, .embed #list-close { display: none !important; }
