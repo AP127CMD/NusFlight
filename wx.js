@@ -3,12 +3,16 @@
 // Data: flights/<F.wx> written by `./fv replay` (flightvid/weather/pack.py) — see that file for the encoding.
 const FT = 0.3048;
 const NM_KM = 1.852;
-const CONVECTIVE_K = 245;                 // cloud-top temperature below this = convective (pack.CONVECTIVE_K)
+const CONVECTIVE_K = 245;                 // cloud-top temperature below this = cold top (pack.CONVECTIVE_K)
+const CORE_COD10 = 100;                   // and optical depth ×10 at least this = storm core, else anvil / cirrus (pack.CORE_COD10)
+const isCore = (ctt, cod10) => ctt > 0 && ctt < CONVECTIVE_K && cod10 >= CORE_COD10;   // pack.storm_core
 const SAT_MAX_MIN = 30;                   // nearest satellite frame this far away or more = no frame (half an hour gap)
 const RADAR_MAX_MIN = 20;                 // newest radar frame at or before now, at most this old
 const HERE_KM = 2;                        // "cloud here" = the highest cell within this distance
 const PHASE = ['clear', 'water', 'supercooled', 'mixed', 'ice'];
-const IDS = ['wx-radar', 'wx-rain', 'wx-cloud', 'wx-conv'];
+const IDS = ['wx-radar', 'wx-rain', 'wx-cloud', 'wx-conv', 'wx-anvil'];   // the first three are also the source ids
+const COLD = ['all', ['>', ['get', 'ctt'], 0], ['<', ['get', 'ctt'], CONVECTIVE_K]];
+const CORE = ['all', COLD, ['>=', ['get', 'cod10'], CORE_COD10]];
 const EMPTY = { type: 'FeatureCollection', features: [] };
 const BLANK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const CTT_COLOR = ['interpolate', ['linear'], ['get', 'ctt'],
@@ -83,10 +87,15 @@ export function createWeather(map, { panel }) {
       filter: ['any', ['>=', ['get', 'ctt'], CONVECTIVE_K], ['==', ['get', 'ctt'], 0]], paint: {
         'fill-extrusion-color': ['case', ['==', ['get', 'ctt'], 0], '#c8ced6', CTT_COLOR],
         'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'top'], 'fill-extrusion-opacity': 0.32 } });
+    // cold but thin = anvil / cirrus: faint and pale, so only opaque cold tops (storm cores) read as storms
+    map.addLayer({ id: 'wx-anvil', type: 'fill-extrusion', source: 'wx-cloud',
+      filter: ['all', COLD, ['!', CORE]], paint: {
+        'fill-extrusion-color': '#c9c3e6',
+        'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'top'], 'fill-extrusion-opacity': 0.18 } });
     map.addLayer({ id: 'wx-conv', type: 'fill-extrusion', source: 'wx-cloud',
-      filter: ['all', ['>', ['get', 'ctt'], 0], ['<', ['get', 'ctt'], CONVECTIVE_K]], paint: {
+      filter: CORE, paint: {
         'fill-extrusion-color': CTT_COLOR,
-        'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'top'], 'fill-extrusion-opacity': 0.55 } });
+        'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-height': ['get', 'top'], 'fill-extrusion-opacity': 0.6 } });
     attrKey = key;
     sat = rain = radar = -1;
     visibility();
@@ -95,7 +104,7 @@ export function createWeather(map, { panel }) {
 
   function visibility() {
     const show = W.on && !!doc;
-    for (const id of ['wx-rain', 'wx-cloud', 'wx-conv']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', show ? 'visible' : 'none');
+    for (const id of ['wx-rain', 'wx-cloud', 'wx-conv', 'wx-anvil']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', show ? 'visible' : 'none');
     if (map.getLayer('wx-radar')) map.setLayoutProperty('wx-radar', 'visibility', show && radar >= 0 ? 'visible' : 'none');
     panel.hidden = !show;
   }
@@ -105,7 +114,7 @@ export function createWeather(map, { panel }) {
     for (let i = 0; i + 6 < c.length; i += 7) {
       if (c[i + 3] < 0) continue;               // cloudy pixel without a cloud-top height: readout only
       const [lon, lat] = decode(q, b, c[i], c[i + 1]);
-      out.push({ type: 'Feature', properties: { base: c[i + 2] * 10, top: c[i + 3] * 10, ctt: c[i + 4], cod: c[i + 5] / 10, ph: c[i + 6] },
+      out.push({ type: 'Feature', properties: { base: c[i + 2] * 10, top: c[i + 3] * 10, ctt: c[i + 4], cod10: c[i + 5], ph: c[i + 6] },
         geometry: square(lon, lat, hx, hy) });
     }
     return { type: 'FeatureCollection', features: out };
@@ -193,7 +202,7 @@ export function createWeather(map, { panel }) {
     }
 
     if (fr) {
-      let here = null, unk = null, unkD = Infinity, n5 = 0, n20 = 0, coldest = Infinity;
+      let here = null, unk = null, unkD = Infinity, n5 = 0, n20 = 0, anvil20 = 0, coldest = Infinity;
       const c = fr.c;
       for (let i = 0; i + 6 < c.length; i += 7) {
         const [lon, lat] = decode(doc.q, doc.box, c[i], c[i + 1]);
@@ -204,18 +213,20 @@ export function createWeather(map, { panel }) {
         }
         if (d < HERE_KM && (!here || c[i + 3] > here[3])) here = c.slice(i, i + 7);
         const ctt = c[i + 4];
-        if (ctt > 0 && ctt < CONVECTIVE_K) {
+        if (isCore(ctt, c[i + 5])) {
           if (d < 5 * NM_KM) n5++;
           if (d < 20 * NM_KM) { n20++; coldest = Math.min(coldest, ctt); }
-        }
+        } else if (ctt > 0 && ctt < CONVECTIVE_K && d < 20 * NM_KM) anvil20++;
       }
       if (here) {
         const [, , b10, t10, ctt, cod, ph] = here;
-        lines.push(`Cloud here: top ${ft100(t10 * 10)} ft (${degC(ctt)}, ${PHASE[ph] || 'phase ?'}, OD ${odTxt(cod)})` +
+        const kind = isCore(ctt, cod) ? ', storm core' : (ctt > 0 && ctt < CONVECTIVE_K ? ', anvil/cirrus' : '');
+        lines.push(`Cloud here: top ${ft100(t10 * 10)} ft (${degC(ctt)}, ${PHASE[ph] || 'phase ?'}, OD ${odTxt(cod)}${kind})` +
           ` · base ~${ft100(b10 * 10)} ft (model guess) · ${you}`);
       } else if (unk != null) lines.push(`Cloud here: cloud (${PHASE[unk] || 'phase ?'}), top unknown · ${you}`);
       else lines.push(`Cloud here: clear from satellite · ${you}`);
-      lines.push(`Convective tops: ${n5} within 5 NM · ${n20} within 20 NM${n20 ? ` (coldest ${degC(coldest)})` : ''} · rain: ${rainTxt}`);
+      lines.push(`Storm cores: ${n5} within 5 NM · ${n20} within 20 NM${n20 ? ` (coldest ${degC(coldest)})` : ''}` +
+        ` · anvil/cirrus ${anvil20} · rain: ${rainTxt}`);
     } else lines.push(`Rain: ${rainTxt} · ${you}`);
     if (noCover) lines.push('no radar coverage here');
 
