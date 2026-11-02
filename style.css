@@ -290,3 +290,4 @@ body.list-open .maplibregl-ctrl-bottom-left { left: calc(var(--list-w) + 2 * var
 
 /* ?embed (inside Flight HQ): the parent page has its own flight list and transport */
 .embed #list, .embed #list-open, .embed #list-close { display: none !important; }
+.embed #play, .embed .speed { display: none !important; }
